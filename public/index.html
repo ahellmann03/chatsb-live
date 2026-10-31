@@ -433,7 +433,7 @@
         // Safe parlay: shortest-priced favorites (lowest decimal odds = most likely), one per game to avoid overlap.
         var seenGames = {};
         var favorites = allBestFavorites
-          .filter(function(f){ return f.dec <= 1.65; }) // roughly -155 or shorter
+          .filter(function(f){ return f.dec <= 1.65 && f.dec >= 1.22; }) // roughly -155 to -450: short enough to be "safe", not so short it's a near-freeroll with no payout
           .sort(function(a,b){ return a.dec - b.dec; })
           .filter(function(f){ if(seenGames[f.game]) return false; seenGames[f.game]=true; return true; })
           .slice(0,3);
