@@ -19,11 +19,28 @@ you run and deploy yourself, so it isn't bound by that limit.
    requests/month, no credit card required.
 2. Copy your API key from their dashboard.
 
-The free tier covers moneylines, spreads, and totals. **Player props are a
-separate, paid "featured markets" add-on** on The Odds API (and on every
-other provider — props cost more because they're more valuable data) — this
-app doesn't pull props for that reason. If you want props later, their docs
-show the extra `markets` params once you're on a paid plan.
+The free tier covers moneylines, spreads, and totals out of the box.
+
+### Player props
+
+This app also pulls player props (anytime TD, rush/pass/reception yards,
+points/rebounds/assists, etc.) — click "Show player props" on any game card.
+Props are fetched per-event from The Odds API's single-event endpoint, since
+they aren't included in the whole-sport odds call.
+
+The Odds API's own docs don't state a hard paid-plan requirement for player
+props — they say coverage is "limited to selected bookmakers and sports,
+expanding over time." In practice that means: try it on your current plan
+first. If a game shows "No player props currently posted," that could mean
+no props are posted for that game yet, or that your plan/region doesn't have
+access to that market — the app shows you whatever The Odds API actually
+returns rather than guessing which. If you consistently get nothing, check
+your plan's market coverage at <https://the-odds-api.com> or upgrade.
+
+One cost note: unlike the main odds call, each props request costs quota
+proportional to the number of markets requested (markets × regions), and it's
+a separate request per game — so clicking into props on a lot of games will
+use quota faster than just browsing the main odds board.
 
 ## 2. Run it locally
 

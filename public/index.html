@@ -61,6 +61,20 @@
 
   .skeleton{opacity:.5;}
   .empty{color:var(--fg-muted);font-size:.88rem;padding:30px 0;text-align:center;}
+
+  .props-toggle{font-family:var(--font-body);font-weight:600;font-size:.76rem;border:1px solid var(--border);background:transparent;color:var(--fg-muted);border-radius:999px;padding:6px 14px;cursor:pointer;margin-top:12px;}
+  .props-toggle:hover{border-color:var(--accent);color:var(--accent);}
+  .props-panel{margin-top:14px;padding-top:14px;border-top:1px solid var(--border);}
+  .props-panel.hidden{display:none;}
+  .props-panel .loading, .props-panel .empty{padding:10px 0;font-size:.85rem;color:var(--fg-muted);}
+  .props-panel .status.err{margin:0 0 10px;}
+  .prop-market{margin-bottom:14px;}
+  .prop-market h5{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--fg-muted);margin:0 0 8px;font-weight:700;}
+  .prop-line{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border);font-size:.84rem;}
+  .prop-line:last-child{border-bottom:none;}
+  .prop-line .who{font-weight:600;}
+  .prop-line .price{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;}
+  .prop-line .book{font-size:.68rem;color:var(--fg-muted);display:block;}
 </style>
 </head>
 <body>
@@ -89,6 +103,20 @@
   (function(){
     var state = { sport: 'nfl', timer: null };
     var titles = { nfl: 'NFL — live lines', cfb: 'College Football — live lines', nba: 'NBA — live lines' };
+
+    var PROP_MARKET_NAMES = {
+      player_anytime_td: 'Anytime Touchdown',
+      player_pass_tds: 'Passing Touchdowns',
+      player_pass_yds: 'Passing Yards',
+      player_rush_yds: 'Rushing Yards',
+      player_reception_yds: 'Receiving Yards',
+      player_receptions: 'Receptions',
+      player_points: 'Points',
+      player_rebounds: 'Rebounds',
+      player_assists: 'Assists',
+      player_threes: '3-Pointers Made',
+      player_points_rebounds_assists: 'Points + Rebounds + Assists'
+    };
 
     function americanToDecimal(a){ return a > 0 ? 1 + a/100 : 1 + 100/Math.abs(a); }
     function fmtPrice(a){ return a > 0 ? '+' + a : String(a); }
@@ -143,6 +171,65 @@
 
     function el(tag, cls, html){ var e = document.createElement(tag); if(cls) e.className = cls; if(html !== undefined) e.innerHTML = html; return e; }
 
+    function summarizeProps(ev){
+      // market key -> line key ("description|name|point") -> best {price, dec, book}
+      var markets = {};
+      (ev.bookmakers||[]).forEach(function(bm){
+        (bm.markets||[]).forEach(function(mk){
+          if(!markets[mk.key]) markets[mk.key] = {};
+          (mk.outcomes||[]).forEach(function(o){
+            var lineKey = (o.description||o.name) + '|' + o.name + '|' + (o.point!=null?o.point:'');
+            var dec = americanToDecimal(o.price);
+            var cur = markets[mk.key][lineKey];
+            if(!cur || dec > cur.dec){
+              markets[mk.key][lineKey] = { price:o.price, dec:dec, book:bm.title, who:o.description||o.name, side:o.name, point:o.point };
+            }
+          });
+        });
+      });
+      return markets;
+    }
+
+    function renderPropsPanel(panel, sport, eventId){
+      panel.innerHTML = '<div class="loading">Loading player props…</div>';
+      fetch('/api/props/' + sport + '/' + encodeURIComponent(eventId))
+        .then(function(res){ return res.json().then(function(body){ return { ok: res.ok, body: body }; }); })
+        .then(function(result){
+          if(!result.ok){
+            panel.innerHTML = '';
+            panel.appendChild(el('div','status err', result.body.error || 'Could not load player props for this game.'));
+            return;
+          }
+          var events = result.body.data;
+          var ev = Array.isArray(events) ? events[0] : events;
+          var markets = ev ? summarizeProps(ev) : {};
+          var keys = Object.keys(markets);
+          panel.innerHTML = '';
+          if(!keys.length){
+            panel.appendChild(el('div','empty','No player props currently posted for this game — coverage depends on your Odds API plan and which books carry props for this matchup.'));
+            return;
+          }
+          keys.forEach(function(mkKey){
+            var block = el('div','prop-market');
+            block.appendChild(el('h5', null, PROP_MARKET_NAMES[mkKey] || mkKey));
+            var lines = markets[mkKey];
+            Object.keys(lines).forEach(function(lineKey){
+              var l = lines[lineKey];
+              var label = l.who + (l.point!=null ? ' — ' + l.side + ' ' + l.point : ' — ' + l.side);
+              var row = el('div','prop-line',
+                '<span class="who">'+label+'</span>'+
+                '<span><span class="price">'+fmtPrice(l.price)+'</span><span class="book">'+l.book+'</span></span>');
+              block.appendChild(row);
+            });
+            panel.appendChild(block);
+          });
+        })
+        .catch(function(err){
+          panel.innerHTML = '';
+          panel.appendChild(el('div','status err','Could not reach the server: ' + err.message));
+        });
+    }
+
     function renderGame(ev){
       var s = summarizeEvent(ev);
       var card = el('div','game');
@@ -174,6 +261,20 @@
         '<div class="top-row"><div class="matchup">'+ev.away_team+' @ '+ev.home_team+'</div><div class="time">'+timeStr+'</div></div>'+
         '<div class="markets">'+mlHtml+spreadHtml+totalHtml+'</div>'+
         '<div class="book-count">Best price picked from '+s.bookCount+' book'+(s.bookCount===1?'':'s')+' at each number — shop around, this is who had the top price right now.</div>';
+
+      var toggle = el('button','props-toggle','Show player props');
+      var panel = el('div','props-panel hidden');
+      var loaded = false;
+      toggle.addEventListener('click', function(){
+        var hidden = panel.classList.toggle('hidden');
+        toggle.textContent = hidden ? 'Show player props' : 'Hide player props';
+        if(!hidden && !loaded){
+          loaded = true;
+          renderPropsPanel(panel, state.sport, ev.id);
+        }
+      });
+      card.appendChild(toggle);
+      card.appendChild(panel);
       return card;
     }
 

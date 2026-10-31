@@ -14,10 +14,23 @@ const SPORT_KEYS = {
   nba: 'basketball_nba'
 };
 
-// In-memory cache, one entry per sport. Good enough for a single small instance;
-// if you ever run multiple server instances behind a load balancer, swap this for
-// a shared cache (Redis, etc.) so they don't each burn their own quota.
+// Default player-prop markets requested per sport. These are real market keys
+// from The Odds API's docs (NFL/NCAAF share one player-props table; NBA has its
+// own). Coverage of these is "limited to selected bookmakers and sports" per
+// The Odds API's own docs and can vary by plan — we don't assume it works,
+// we just ask and report back whatever the API actually returns.
+const PROP_MARKETS = {
+  nfl: 'player_anytime_td,player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions',
+  cfb: 'player_anytime_td,player_pass_tds,player_pass_yds,player_rush_yds,player_reception_yds,player_receptions',
+  nba: 'player_points,player_rebounds,player_assists,player_threes,player_points_rebounds_assists'
+};
+
+// In-memory cache, one entry per sport (odds) or per sport+event (props). Good
+// enough for a single small instance; if you ever run multiple server instances
+// behind a load balancer, swap this for a shared cache (Redis, etc.) so they
+// don't each burn their own quota.
 const cache = {};
+const propsCache = {};
 
 async function fetchOdds(sportSlug) {
   const now = Date.now();
@@ -59,6 +72,63 @@ async function fetchOdds(sportSlug) {
   cache[sportSlug] = { data, fetchedAt: now };
   return { data, cached: false, fetchedAt: now };
 }
+
+async function fetchProps(sportSlug, eventId) {
+  const now = Date.now();
+  const cacheKey = sportSlug + ':' + eventId;
+  const cached = propsCache[cacheKey];
+  if (cached && (now - cached.fetchedAt) < CACHE_TTL_MS) {
+    return { data: cached.data, cached: true, fetchedAt: cached.fetchedAt };
+  }
+
+  const sportKey = SPORT_KEYS[sportSlug];
+  if (!sportKey) {
+    throw Object.assign(new Error('Unknown sport. Use nfl, cfb, or nba.'), { status: 404 });
+  }
+  const markets = PROP_MARKETS[sportSlug];
+  if (!ODDS_API_KEY) {
+    throw Object.assign(new Error('ODDS_API_KEY is not set on the server.'), { status: 500 });
+  }
+
+  // Player props live on the per-event endpoint, not the whole-sport /odds
+  // endpoint — The Odds API only exposes them one event at a time.
+  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${encodeURIComponent(eventId)}/odds?apiKey=${encodeURIComponent(ODDS_API_KEY)}&regions=us&markets=${encodeURIComponent(markets)}&oddsFormat=american`;
+
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (networkErr) {
+    throw Object.assign(new Error(`Could not reach The Odds API (network error: ${networkErr.message}).`), { status: 502 });
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    // We don't guess what this means — The Odds API doesn't document a specific
+    // error for "your plan doesn't include this market", so we just pass their
+    // real response text straight through for the UI to show honestly.
+    throw Object.assign(new Error(`The Odds API returned ${res.status} for player props: ${text || '(no body)'}`), { status: res.status === 401 ? 502 : res.status });
+  }
+  const data = await res.json();
+
+  const remaining = res.headers.get('x-requests-remaining');
+  const used = res.headers.get('x-requests-used');
+  if (remaining != null) {
+    console.log(`[odds-api] props ${sportSlug}/${eventId}: used=${used} remaining=${remaining}`);
+  }
+
+  propsCache[cacheKey] = { data, fetchedAt: now };
+  return { data, cached: false, fetchedAt: now };
+}
+
+app.get('/api/props/:sport/:eventId', async (req, res) => {
+  try {
+    const result = await fetchProps(req.params.sport.toLowerCase(), req.params.eventId);
+    res.set('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (err) {
+    console.error(`[odds-api] error fetching props ${req.params.sport}/${req.params.eventId}:`, err.message);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
 
 app.get('/api/odds/:sport', async (req, res) => {
   try {
