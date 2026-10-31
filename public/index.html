@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat SB Live</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#070b09; --surface:#0f1713; --surface-2:#152019;
+    --fg:#eafbf0; --fg-muted:#80a690; --border:#203229;
+    --accent:#28e07e; --accent-bg:rgba(40,224,126,.14); --accent-fg:#05170d;
+    --ok:#2fe37f; --ok-bg:rgba(47,227,127,.14);
+    --warn:#e3b34a; --warn-bg:rgba(227,179,74,.14);
+    --err:#ff6b6b; --err-bg:rgba(255,107,107,.14);
+    --font-display:'Oswald',Arial Narrow,Arial,sans-serif;
+    --font-body:'IBM Plex Sans',-apple-system,"Segoe UI",Roboto,sans-serif;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);line-height:1.5;}
+  h1,h2,h3{font-family:var(--font-display);text-transform:uppercase;letter-spacing:.02em;margin:0;}
+  .wrap{padding-left:max(20px, env(safe-area-inset-left,0px));padding-right:max(20px, env(safe-area-inset-right,0px));}
+  .max{max-width:1080px;margin:0 auto;}
+
+  nav.top{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--border);}
+  nav.top .inner{display:flex;align-items:center;gap:16px;padding-block:14px;flex-wrap:wrap;}
+  nav.top .brand{font-family:var(--font-display);font-size:1.1rem;letter-spacing:.03em;white-space:nowrap;}
+  nav.top .brand .dot{color:var(--accent);}
+  nav.top .brand .live{display:inline-flex;align-items:center;gap:5px;font-size:.62rem;font-weight:700;letter-spacing:.06em;color:var(--accent);margin-left:8px;vertical-align:middle;text-transform:none;}
+  nav.top .brand .live .pip{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:pulse 1.6s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:.3;}}
+  nav.top .tabs{display:flex;gap:8px;margin-left:auto;}
+  nav.top .tab{font-family:var(--font-body);font-weight:600;font-size:.82rem;border:1px solid var(--border);background:var(--surface);color:var(--fg-muted);border-radius:999px;padding:8px 16px;cursor:pointer;}
+  nav.top .tab.active{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);}
+
+  .hero{padding-block:26px 18px;}
+  .hero h1{font-size:1.7rem;}
+  .hero .sub{color:var(--fg-muted);margin-top:6px;font-size:.92rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .refresh-btn{font-family:var(--font-body);font-weight:600;font-size:.76rem;border:1px solid var(--border);background:var(--surface);color:var(--fg);border-radius:999px;padding:5px 12px;cursor:pointer;}
+  .refresh-btn:hover{border-color:var(--accent);color:var(--accent);}
+
+  main{padding-block:10px 60px;}
+
+  .status{border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:.88rem;}
+  .status.err{background:var(--err-bg);color:var(--err);}
+  .status.warn{background:var(--warn-bg);color:var(--warn);}
+
+  .game{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px;}
+  .game .top-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+  .game .matchup{font-family:var(--font-display);font-size:1.05rem;}
+  .game .time{font-size:.76rem;color:var(--fg-muted);}
+  .markets{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;}
+  .market h4{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--fg-muted);margin:0 0 8px;font-weight:700;}
+  .mline{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border);font-size:.85rem;}
+  .mline:last-child{border-bottom:none;}
+  .mline .side{font-weight:600;}
+  .mline .price{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;}
+  .mline .book{font-size:.68rem;color:var(--fg-muted);display:block;}
+  .book-count{font-size:.68rem;color:var(--fg-muted);margin-top:10px;}
+
+  .skeleton{opacity:.5;}
+  .empty{color:var(--fg-muted);font-size:.88rem;padding:30px 0;text-align:center;}
+</style>
+</head>
+<body>
+  <nav class="top"><div class="wrap max inner">
+    <div class="brand">CHAT<span class="dot">•</span>SB <span class="live"><span class="pip"></span>LIVE</span></div>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-sport="nfl">NFL</button>
+      <button class="tab" data-sport="cfb">College Football</button>
+      <button class="tab" data-sport="nba">NBA</button>
+    </div>
+  </div></nav>
+
+  <div class="wrap max">
+    <div class="hero">
+      <h1 id="hero-title">NFL — live lines</h1>
+      <div class="sub">
+        <span id="last-updated">Loading...</span>
+        <button class="refresh-btn" id="refresh-btn">Refresh now</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="wrap max" id="main"></main>
+
+  <script>
+  (function(){
+    var state = { sport: 'nfl', timer: null };
+    var titles = { nfl: 'NFL — live lines', cfb: 'College Football — live lines', nba: 'NBA — live lines' };
+
+    function americanToDecimal(a){ return a > 0 ? 1 + a/100 : 1 + 100/Math.abs(a); }
+    function fmtPrice(a){ return a > 0 ? '+' + a : String(a); }
+    function mode(arr){
+      if(!arr.length) return null;
+      var counts = {}, best = arr[0], bestCount = 0;
+      arr.forEach(function(v){ counts[v] = (counts[v]||0) + 1; if(counts[v] > bestCount){ bestCount = counts[v]; best = v; } });
+      return best;
+    }
+
+    function summarizeEvent(ev){
+      var bms = ev.bookmakers || [];
+      var mlBest = {}, spreadPoints = [], totalPoints = [];
+      bms.forEach(function(bm){
+        (bm.markets||[]).forEach(function(mk){
+          if(mk.key==='h2h'){
+            mk.outcomes.forEach(function(o){
+              var dec = americanToDecimal(o.price);
+              if(!mlBest[o.name] || dec > mlBest[o.name].dec){ mlBest[o.name] = {price:o.price, dec:dec, book:bm.title}; }
+            });
+          } else if(mk.key==='spreads'){
+            mk.outcomes.forEach(function(o){ spreadPoints.push(String(o.point)); });
+          } else if(mk.key==='totals'){
+            mk.outcomes.forEach(function(o){ totalPoints.push(String(o.point)); });
+          }
+        });
+      });
+      var consensusSpread = mode(spreadPoints);
+      var consensusTotal = mode(totalPoints);
+      var spreadBest = {}, totalBest = {};
+      bms.forEach(function(bm){
+        (bm.markets||[]).forEach(function(mk){
+          if(mk.key==='spreads'){
+            mk.outcomes.forEach(function(o){
+              if(String(o.point) === consensusSpread){
+                var dec = americanToDecimal(o.price);
+                if(!spreadBest[o.name] || dec > spreadBest[o.name].dec){ spreadBest[o.name] = {price:o.price, dec:dec, book:bm.title, point:o.point}; }
+              }
+            });
+          } else if(mk.key==='totals'){
+            mk.outcomes.forEach(function(o){
+              if(String(o.point) === consensusTotal){
+                var dec = americanToDecimal(o.price);
+                if(!totalBest[o.name] || dec > totalBest[o.name].dec){ totalBest[o.name] = {price:o.price, dec:dec, book:bm.title, point:o.point}; }
+              }
+            });
+          }
+        });
+      });
+      return { ml: mlBest, spread: spreadBest, total: totalBest, bookCount: bms.length };
+    }
+
+    function el(tag, cls, html){ var e = document.createElement(tag); if(cls) e.className = cls; if(html !== undefined) e.innerHTML = html; return e; }
+
+    function renderGame(ev){
+      var s = summarizeEvent(ev);
+      var card = el('div','game');
+      var when = new Date(ev.commence_time);
+      var timeStr = when.toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+
+      var mlHtml = '<div class="market"><h4>Moneyline — best price</h4>';
+      [ev.away_team, ev.home_team].forEach(function(team){
+        var m = s.ml[team];
+        mlHtml += '<div class="mline"><span class="side">'+team+'</span><span>'+(m ? '<span class="price">'+fmtPrice(m.price)+'</span><span class="book">'+m.book+'</span>' : '<span class="book">—</span>')+'</span></div>';
+      });
+      mlHtml += '</div>';
+
+      var spreadHtml = '<div class="market"><h4>Spread — best price</h4>';
+      [ev.away_team, ev.home_team].forEach(function(team){
+        var m = s.spread[team];
+        spreadHtml += '<div class="mline"><span class="side">'+team+' '+(m ? (m.point>0?'+':'')+m.point : '')+'</span><span>'+(m ? '<span class="price">'+fmtPrice(m.price)+'</span><span class="book">'+m.book+'</span>' : '<span class="book">—</span>')+'</span></div>';
+      });
+      spreadHtml += '</div>';
+
+      var totalHtml = '<div class="market"><h4>Total — best price</h4>';
+      ['Over','Under'].forEach(function(side){
+        var m = s.total[side];
+        totalHtml += '<div class="mline"><span class="side">'+side+' '+(m ? m.point : '')+'</span><span>'+(m ? '<span class="price">'+fmtPrice(m.price)+'</span><span class="book">'+m.book+'</span>' : '<span class="book">—</span>')+'</span></div>';
+      });
+      totalHtml += '</div>';
+
+      card.innerHTML =
+        '<div class="top-row"><div class="matchup">'+ev.away_team+' @ '+ev.home_team+'</div><div class="time">'+timeStr+'</div></div>'+
+        '<div class="markets">'+mlHtml+spreadHtml+totalHtml+'</div>'+
+        '<div class="book-count">Best price picked from '+s.bookCount+' book'+(s.bookCount===1?'':'s')+' at each number — shop around, this is who had the top price right now.</div>';
+      return card;
+    }
+
+    function setStatus(msg, cls){
+      var main = document.getElementById('main');
+      var existing = main.querySelector('.status');
+      if(existing) existing.remove();
+      if(!msg) return;
+      main.insertBefore(el('div','status '+(cls||''), msg), main.firstChild);
+    }
+
+    function load(sport){
+      var main = document.getElementById('main');
+      document.getElementById('last-updated').textContent = 'Refreshing...';
+      fetch('/api/odds/' + sport)
+        .then(function(res){ return res.json().then(function(body){ return { ok: res.ok, body: body }; }); })
+        .then(function(result){
+          if(!result.ok){
+            main.innerHTML = '';
+            setStatus(result.body.error || 'Something went wrong fetching live odds.', 'err');
+            document.getElementById('last-updated').textContent = 'Failed to refresh';
+            return;
+          }
+          var events = result.body.data || [];
+          main.innerHTML = '';
+          if(!events.length){
+            main.appendChild(el('div','empty','No games currently posted for this sport — check back closer to game day.'));
+          } else {
+            events.forEach(function(ev){ main.appendChild(renderGame(ev)); });
+          }
+          var when = new Date(result.body.fetchedAt);
+          document.getElementById('last-updated').textContent =
+            (result.body.cached ? 'Cached · last fetched ' : 'Live · fetched ') + when.toLocaleTimeString();
+        })
+        .catch(function(err){
+          main.innerHTML = '';
+          setStatus('Could not reach the server: ' + err.message, 'err');
+          document.getElementById('last-updated').textContent = 'Failed to refresh';
+        });
+    }
+
+    function setSport(sport){
+      state.sport = sport;
+      document.getElementById('hero-title').textContent = titles[sport];
+      document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active', t.dataset.sport === sport); });
+      load(sport);
+    }
+
+    document.getElementById('tabs').addEventListener('click', function(e){
+      var btn = e.target.closest('.tab');
+      if(btn) setSport(btn.dataset.sport);
+    });
+    document.getElementById('refresh-btn').addEventListener('click', function(){ load(state.sport); });
+
+    setSport('nfl');
+    state.timer = setInterval(function(){ load(state.sport); }, 30000);
+  })();
+  </script>
+</body>
+</html>
