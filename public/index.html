@@ -75,12 +75,36 @@
   .prop-line .who{font-weight:600;}
   .prop-line .price{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;}
   .prop-line .book{font-size:.68rem;color:var(--fg-muted);display:block;}
+
+  .pick-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px;}
+  .pick-card .pick-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .pick-card .pick-sport{font-size:.64rem;font-weight:700;letter-spacing:.06em;color:var(--accent);text-transform:uppercase;}
+  .pick-card .pick-game{font-size:.72rem;color:var(--fg-muted);margin-top:2px;}
+  .pick-card .pick-side{font-family:var(--font-display);font-size:1.15rem;margin-top:8px;}
+  .pick-card .pick-meta{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:.84rem;}
+  .pick-card .pick-price{color:var(--accent);font-weight:700;font-variant-numeric:tabular-nums;}
+  .pick-card .pick-book{color:var(--fg-muted);font-size:.72rem;}
+  .pick-card .pick-edge{background:var(--accent-bg);color:var(--accent);font-weight:700;font-size:.72rem;border-radius:999px;padding:3px 10px;}
+  .pick-card .pick-why{font-size:.78rem;color:var(--fg-muted);margin-top:8px;line-height:1.45;}
+
+  .parlay-card{background:var(--surface);border:1px solid var(--accent);border-radius:14px;padding:16px;margin-bottom:12px;}
+  .parlay-card h3{font-size:1rem;margin-bottom:4px;}
+  .parlay-card .parlay-sub{font-size:.76rem;color:var(--fg-muted);margin-bottom:10px;}
+  .parlay-leg{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border);font-size:.84rem;}
+  .parlay-leg:last-child{border-bottom:none;}
+  .parlay-total{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .parlay-total .combined{font-family:var(--font-display);font-size:1.3rem;color:var(--accent);}
+  .parlay-total .implied{font-size:.72rem;color:var(--fg-muted);}
+
+  .section-label{font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fg-muted);margin:22px 0 10px;}
+  .section-label:first-child{margin-top:0;}
 </style>
 </head>
 <body>
   <nav class="top"><div class="wrap max inner">
     <div class="brand">CHAT<span class="dot">•</span>SB <span class="live"><span class="pip"></span>LIVE</span></div>
     <div class="tabs" id="tabs">
+      <button class="tab" data-sport="picks">Picks &amp; Parlays</button>
       <button class="tab active" data-sport="nfl">NFL</button>
       <button class="tab" data-sport="cfb">College Football</button>
       <button class="tab" data-sport="nba">NBA</button>
@@ -102,7 +126,8 @@
   <script>
   (function(){
     var state = { sport: 'nfl', timer: null };
-    var titles = { nfl: 'NFL — live lines', cfb: 'College Football — live lines', nba: 'NBA — live lines' };
+    var titles = { nfl: 'NFL — live lines', cfb: 'College Football — live lines', nba: 'NBA — live lines', picks: 'Today’s best value — picks & parlays' };
+    var SPORT_LABELS = { nfl: 'NFL', cfb: 'CFB', nba: 'NBA' };
 
     var PROP_MARKET_NAMES = {
       player_anytime_td: 'Anytime Touchdown',
@@ -119,6 +144,10 @@
     };
 
     function americanToDecimal(a){ return a > 0 ? 1 + a/100 : 1 + 100/Math.abs(a); }
+    function decimalToAmerican(d){
+      if(d <= 1) return 0;
+      return d >= 2 ? Math.round((d-1)*100) : Math.round(-100/(d-1));
+    }
     function fmtPrice(a){ return a > 0 ? '+' + a : String(a); }
     function mode(arr){
       if(!arr.length) return null;
@@ -167,6 +196,57 @@
         });
       });
       return { ml: mlBest, spread: spreadBest, total: totalBest, bookCount: bms.length };
+    }
+
+    // Real, computed "value" picks: for each outcome, compare the single best
+    // price available against the AVERAGE price across every book quoting it.
+    // A big gap means one book is meaningfully out of step with the market —
+    // that's genuine line-shopping edge, not a guess or a fabricated stat.
+    // Minimum book count avoids calling noise on a thin market "value".
+    var MIN_BOOKS_FOR_EDGE = 4;
+    var MIN_EDGE_PCT = 2.5;
+
+    function collectOutcomeDecimals(ev){
+      // marketKey -> lineKey (side+point) -> [{dec, price, book}]
+      var out = {};
+      (ev.bookmakers||[]).forEach(function(bm){
+        (bm.markets||[]).forEach(function(mk){
+          if(mk.key!=='h2h' && mk.key!=='spreads' && mk.key!=='totals') return;
+          if(!out[mk.key]) out[mk.key] = {};
+          (mk.outcomes||[]).forEach(function(o){
+            var lineKey = o.name + '|' + (o.point!=null?o.point:'');
+            if(!out[mk.key][lineKey]) out[mk.key][lineKey] = [];
+            out[mk.key][lineKey].push({ dec: americanToDecimal(o.price), price:o.price, book:bm.title, name:o.name, point:o.point });
+          });
+        });
+      });
+      return out;
+    }
+
+    function computeEdges(ev, sportSlug){
+      var byMarket = collectOutcomeDecimals(ev);
+      var edges = [];
+      var marketLabels = { h2h: 'Moneyline', spreads: 'Spread', totals: 'Total' };
+      Object.keys(byMarket).forEach(function(mkKey){
+        Object.keys(byMarket[mkKey]).forEach(function(lineKey){
+          var quotes = byMarket[mkKey][lineKey];
+          if(quotes.length < MIN_BOOKS_FOR_EDGE) return;
+          var avgDec = quotes.reduce(function(s,q){ return s+q.dec; }, 0) / quotes.length;
+          var best = quotes.reduce(function(a,b){ return b.dec > a.dec ? b : a; });
+          var edgePct = (best.dec - avgDec) / avgDec * 100;
+          if(edgePct < MIN_EDGE_PCT) return;
+          var side = best.name;
+          if(mkKey==='spreads' && best.point!=null) side += ' ' + (best.point>0?'+':'') + best.point;
+          if(mkKey==='totals' && best.point!=null) side += ' ' + best.point;
+          edges.push({
+            sport: sportSlug, market: marketLabels[mkKey]||mkKey, side: side,
+            game: ev.away_team + ' @ ' + ev.home_team, price: best.price, book: best.book,
+            dec: best.dec, edgePct: edgePct, avgDec: avgDec, bookCount: quotes.length,
+            commence: ev.commence_time
+          });
+        });
+      });
+      return edges;
     }
 
     function el(tag, cls, html){ var e = document.createElement(tag); if(cls) e.className = cls; if(html !== undefined) e.innerHTML = html; return e; }
@@ -278,6 +358,107 @@
       return card;
     }
 
+    function renderPickCard(p){
+      var card = el('div','pick-card');
+      var when = new Date(p.commence);
+      var timeStr = when.toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+      card.innerHTML =
+        '<div class="pick-top"><div><div class="pick-sport">'+SPORT_LABELS[p.sport]+' · '+p.market+'</div>'+
+        '<div class="pick-game">'+p.game+' · '+timeStr+'</div></div>'+
+        '<div class="pick-edge">+'+p.edgePct.toFixed(1)+'% edge</div></div>'+
+        '<div class="pick-side">'+p.side+'</div>'+
+        '<div class="pick-meta"><span><span class="pick-price">'+fmtPrice(p.price)+'</span> <span class="pick-book">at '+p.book+'</span></span></div>'+
+        '<div class="pick-why">This book is pricing it meaningfully better than the '+p.bookCount+'-book average right now ('+fmtPrice(decimalToAmerican(p.avgDec))+' avg) — real line-shopping value, not a projection.</div>';
+      return card;
+    }
+
+    function buildParlay(legs, label, sub){
+      if(legs.length < 2) return null;
+      var combinedDec = legs.reduce(function(p,l){ return p*l.dec; }, 1);
+      var card = el('div','parlay-card');
+      var legsHtml = legs.map(function(l){
+        return '<div class="parlay-leg"><span>'+l.side+' <span class="pick-book">('+SPORT_LABELS[l.sport]+' · '+l.game+')</span></span><span class="pick-price">'+fmtPrice(l.price)+'</span></div>';
+      }).join('');
+      card.innerHTML =
+        '<h3>'+label+'</h3><div class="parlay-sub">'+sub+'</div>'+
+        legsHtml+
+        '<div class="parlay-total"><span class="combined">'+fmtPrice(decimalToAmerican(combinedDec))+'</span>'+
+        '<span class="implied">'+(100/combinedDec).toFixed(1)+'% implied win probability</span></div>';
+      return card;
+    }
+
+    function loadPicks(){
+      var main = document.getElementById('main');
+      document.getElementById('last-updated').textContent = 'Refreshing...';
+      Promise.all(['nfl','cfb','nba'].map(function(sport){
+        return fetch('/api/odds/' + sport)
+          .then(function(res){ return res.json().then(function(body){ return { sport: sport, ok: res.ok, body: body }; }); })
+          .catch(function(err){ return { sport: sport, ok: false, body: { error: err.message } }; });
+      })).then(function(results){
+        main.innerHTML = '';
+        var failed = results.filter(function(r){ return !r.ok; });
+        if(failed.length === results.length){
+          setStatus(results[0].body.error || 'Could not load odds for picks.', 'err');
+          document.getElementById('last-updated').textContent = 'Failed to refresh';
+          return;
+        }
+
+        var allEdges = [];
+        var allBestFavorites = [];
+        results.forEach(function(r){
+          if(!r.ok) return;
+          (r.body.data||[]).forEach(function(ev){
+            allEdges = allEdges.concat(computeEdges(ev, r.sport));
+            var s = summarizeEvent(ev);
+            Object.keys(s.ml).forEach(function(team){
+              allBestFavorites.push({
+                sport: r.sport, game: ev.away_team+' @ '+ev.home_team, side: team+' moneyline',
+                price: s.ml[team].price, dec: s.ml[team].dec, book: s.ml[team].book, commence: ev.commence_time
+              });
+            });
+          });
+        });
+
+        allEdges.sort(function(a,b){ return b.edgePct - a.edgePct; });
+        var topEdges = allEdges.slice(0, 8);
+
+        main.appendChild(el('div','section-label','Today’s best value'));
+        if(!topEdges.length){
+          main.appendChild(el('div','empty','No standout price gaps across books right now — the market is tightly lined at the moment. Check back as lines move closer to game time.'));
+        } else {
+          topEdges.forEach(function(p){ main.appendChild(renderPickCard(p)); });
+        }
+
+        main.appendChild(el('div','section-label','Suggested parlays'));
+        // Safe parlay: shortest-priced favorites (lowest decimal odds = most likely), one per game to avoid overlap.
+        var seenGames = {};
+        var favorites = allBestFavorites
+          .filter(function(f){ return f.dec <= 1.65; }) // roughly -155 or shorter
+          .sort(function(a,b){ return a.dec - b.dec; })
+          .filter(function(f){ if(seenGames[f.game]) return false; seenGames[f.game]=true; return true; })
+          .slice(0,3);
+        var safeParlay = buildParlay(favorites, 'Safe parlay — short favorites', favorites.length+'-leg parlay combining the shortest-priced favorites on the board, one leg per game.');
+        if(safeParlay) main.appendChild(safeParlay);
+
+        var seenGames2 = {};
+        var valueLegs = topEdges
+          .filter(function(e){ if(seenGames2[e.game]) return false; seenGames2[e.game]=true; return true; })
+          .slice(0,3);
+        var valueParlay = buildParlay(valueLegs, 'Value parlay — biggest price gaps', valueLegs.length+'-leg parlay combining the top line-shopping edges above, one leg per game.');
+        if(valueParlay) main.appendChild(valueParlay);
+
+        if(!safeParlay && !valueParlay){
+          main.appendChild(el('div','empty','Not enough qualifying legs right now to build a parlay suggestion.'));
+        }
+
+        main.appendChild(el('div','section-label','How this works'));
+        main.appendChild(el('div','pick-why','Value picks are calculated live from the odds already on this page: we compare every book’s price on a side against the average price across all books quoting it, and flag the ones where the best available price is at least '+MIN_EDGE_PCT+'% better than that average, with at least '+MIN_BOOKS_FOR_EDGE+' books quoting it. Parlays multiply the decimal odds of real current best prices. Nothing here is a prediction of who wins — it’s where the market is currently mispriced relative to itself.'));
+
+        var when = new Date();
+        document.getElementById('last-updated').textContent = 'Live · computed ' + when.toLocaleTimeString();
+      });
+    }
+
     function setStatus(msg, cls){
       var main = document.getElementById('main');
       var existing = main.querySelector('.status');
@@ -287,6 +468,7 @@
     }
 
     function load(sport){
+      if(sport === 'picks'){ loadPicks(); return; }
       var main = document.getElementById('main');
       document.getElementById('last-updated').textContent = 'Refreshing...';
       fetch('/api/odds/' + sport)
